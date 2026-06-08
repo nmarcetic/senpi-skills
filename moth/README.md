@@ -1,104 +1,100 @@
-# MOTH v1.0.0 — Deploy Guide
+# MOTH v3.1 — Deploy Guide
 
 ## What it is
 
-Outcome market funding fade on Hyperliquid prediction markets. Detects extreme
-funding on binary resolution tickers, enters opposite the crowded side to collect
-the funding stream, and hard-exits before resolution.
+Dual-mode autonomous funding strategy on Hyperliquid perps. Uses the top-20 leaderboard (4h window) as an arbiter to decide which side of the trade to be on.
 
-## Prerequisites
+| Mode | Signal | Direction | Timeout |
+|---|---|---|---|
+| **A — Retail fade** | Funding ≥50% ann + ≥2h, top-20 traders absent (<2 longs) | SHORT | 48h |
+| **B — Smart money ride** | ≥2 top-20 traders LONG + funding ≥30% ann + ≥1.5h | LONG | 28h |
 
-- Running OpenClaw / Senpi runtime host (Railway, VPS, etc.)
-- `@senpi-ai/runtime` npm package installed (`npm install @senpi-ai/runtime@latest`)
-- Python 3.10+ with `senpi_runtime_helpers` (ships inside `senpi-trading-runtime`)
-- A funded Senpi strategy wallet (minimum $100, recommended $200+)
-- Your Senpi auth token (`SENPI_AUTH_TOKEN`)
+Conflict → Mode B wins. No trade if neither fires.
 
-## Environment variables
+> Runs as a **Hermes cron job** (every 30 min) — no Railway, no OpenClaw, no Node.js host required.
 
-Set these before deploying:
+---
+
+## Files
+
+```
+moth/
+├── SKILL.md                    strategy docs + operator spec
+├── README.md                   this file
+├── runtime.yaml                DSL config (reference for @senpi-ai/runtime operators)
+├── config/moth-config.json     operator-tunable thresholds
+├── scripts/moth-producer.py    reference signal emitter
+├── scripts/moth_config.py      config loader
+├── references/
+│   └── skill-attribution.md   attribution (v3.1.0)
+└── tests/
+    └── test_moth_producer.py   29 unit + integration tests
+```
+
+---
+
+## Quick deploy (Hermes cron — recommended)
+
+1. Create strategy wallet (one-time):
+```
+strategy_create_custom_strategy(
+  initialBudget=200,
+  positions=[],
+  skillName="moth",
+  skillVersion="3.1.0"
+)
+```
+
+2. Create cron job with the MOTH v3.1 prompt (see SKILL.md for full tick procedure).
+
+3. State file auto-initialises at `/opt/data/moth_state.json` on first tick.
+
+That's it. MOTH messages you only when a position opens.
+
+---
+
+## Deploy via @senpi-ai/runtime (alternative)
 
 ```bash
-export MOTH_WALLET="0x<your-strategy-wallet-address>"
-export SENPI_AUTH_TOKEN="eyJ..."
-export TELEGRAM_CHAT_ID="<your-telegram-chat-id>"
-export MOTH_DECISION_MODEL="claude-sonnet-4-20250514"   # or gemini-2.5-pro
+npm install @senpi-ai/runtime
 ```
 
-## Deploy steps
-
-### 1. Create a strategy wallet via Senpi
-
-```json
-{
-  "tool": "strategy_create_custom_strategy",
-  "args": {
-    "initialBudget": 200,
-    "positions": [],
-    "strategyName": "moth",
-    "skill_name": "moth",
-    "skill_version": "1.0.0"
-  }
-}
+Set env vars:
 ```
-
-Copy the `strategyWalletAddress` → set as `MOTH_WALLET`.
-
-### 2. Register the runtime
+MOTH_WALLET=<strategy_wallet_address>
+TELEGRAM_CHAT_ID=<your_chat_id>
+MOTH_DECISION_MODEL=anthropic/claude-sonnet-4-5   # or any OpenRouter model
+SENPI_AUTH_TOKEN=<your_senpi_token>
+```
 
 ```bash
-openclaw senpi runtime create --path /path/to/senpi-skills/moth/runtime.yaml
-openclaw senpi runtime list   # confirm registered as moth-tracker
-openclaw senpi status
+python scripts/moth-producer.py
 ```
 
-### 3. (Optional) Populate expiry registry
+The runtime reads `runtime.yaml` for DSL exit config.
 
-Edit `config/moth-config.json` and add known expiry timestamps:
+---
 
-```json
-"expiry_registry": {
-  "TRUMP-WINS-2026-YES": 1780000000
-}
-```
+## Risk stack
 
-### 4. Launch the producer daemon
+**Three layers — belt + suspenders + the floor itself:**
 
-```bash
-nohup python3 -u /path/to/senpi-skills/moth/scripts/moth-producer.py \
-  > /tmp/moth-producer.log 2>&1 &
-disown
-```
+1. **Native Hyperliquid SL** — 15% margin stop, market order, fires on-chain even if everything else goes down
+2. **Senpi Ratchet Stop** — profit lock at +8/15/25/40% ROE (Senpi backend manages it)
+3. **State file** — daily loss limit ($10), 15% drawdown halt, 2-loss cooldown, 6h per-asset cooldown
 
-### 5. Verify liveness
+---
 
-```bash
-ps -ef | grep moth-producer | grep -v grep        # exactly one process
-grep daemon_tick_finished /tmp/moth-producer.log | tail -3   # "status":"ok"
-```
+## Tunable thresholds (`config/moth-config.json`)
 
-## Tuning
-
-Edit `config/moth-config.json`:
-
-| Parameter | Default | Notes |
+| Key | Default | Notes |
 |---|---|---|
-| `min_funding_annualized_pct` | 50 | Raise to 80+ for only extreme signals |
-| `min_persistence_hours` | 6 | Raise to 12 for higher conviction |
-| `min_oi_usd` | 100000 | Lower only if you accept liquidity risk |
-| `min_days_to_expiry` | 1.0 | Never lower below 0.5 |
-| `force_close_hours_before_expiry` | 6 | **Do not lower below 4** |
-| `leverage` | 2 | **Hard max 2x — do not raise** |
-
-## ⚠️ Critical warnings
-
-1. **LEVERAGE CAP IS 2x — NON-NEGOTIABLE.** Outcome markets resolve to 0 or 1.
-   If you're on the wrong side at expiry with 10x leverage, you lose everything.
-
-2. **Expiry gate is in the producer.** The DSL cannot know about resolution dates.
-   The `force_close_hours_before_expiry` gate only prevents NEW entries. You must
-   monitor open positions manually or via the expiry registry as resolution approaches.
-
-3. **Liquidity.** Outcome market books are thin. The 20s execution timeout in
-   `runtime.yaml` accounts for this but very illiquid tickers may not fill.
-   The `min_oi_usd: 100000` gate is your first defence.
+| `mode_b_funding_threshold` | 30% | Min annualized funding for Mode B (LONG) entry |
+| `mode_a_funding_threshold` | 50% | Min annualized funding for Mode A (SHORT) entry |
+| `mode_b_persistence_hours` | 1.5 | Min hours funding must persist for Mode B |
+| `mode_a_persistence_hours` | 2.0 | Min hours funding must persist for Mode A |
+| `leaderboard_min_count` | 2 | Min top-20 traders needed to trigger Mode B |
+| `max_leverage` | 5 | Hard cap (Mode B uses leaderboard-median, floor 2x) |
+| `margin_per_slot` | 40 | USD per position |
+| `daily_loss_limit` | 10 | USD — halt entries if hit |
+| `drawdown_halt_pct` | 15 | % from peak — halt entries if hit |

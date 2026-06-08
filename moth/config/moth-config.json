@@ -1,28 +1,60 @@
 {
-  "_comment": "MOTH v1.0.0 — operator-tunable config. All thresholds are conservative defaults.",
+  "_comment": "MOTH v3.1 — operator-tunable config. All thresholds are conservative defaults.",
 
-  "min_funding_annualized_pct": 50.0,
-  "_min_funding_annualized_pct_note": "Minimum annualized funding % to consider. 50% = extreme crowding. Raise to 80+ for highest-conviction only.",
+  "mode_b_funding_threshold": 30.0,
+  "_mode_b_note": "Mode B (LONG — smart money ride): min annualized funding %. Smart money confirmed + funding elevated.",
 
-  "min_persistence_hours": 6.0,
-  "_min_persistence_hours_note": "Consecutive hours the funding must have been elevated before entry. Prevents one-tick spikes.",
+  "mode_a_funding_threshold": 50.0,
+  "_mode_a_note": "Mode A (SHORT — retail fade): min annualized funding %. No smart money, pure retail crowding.",
 
-  "min_oi_usd": 100000.0,
-  "_min_oi_usd_note": "Minimum open interest in USD. Below this, liquidity risk on exit is too high.",
+  "mode_b_persistence_hours": 1.5,
+  "_mode_b_persistence_note": "Mode B: 1.5h — early entry, catches crowding while still building.",
 
-  "min_days_to_expiry": 1.0,
-  "_min_days_to_expiry_note": "Minimum days remaining before expiry to allow new entry. Never enter within 24h of resolution.",
+  "mode_a_persistence_hours": 2.0,
+  "_mode_a_persistence_note": "Mode A: 2h — enough to confirm it's not a single-tick spike.",
 
-  "force_close_hours_before_expiry": 6.0,
-  "_force_close_hours_note": "Hard gate: producer stops emitting signals for tickers within this many hours of expiry. The operator should also manually close any open positions at this threshold.",
+  "leaderboard_min_count": 2,
+  "_leaderboard_note": "Min top-20 traders long an asset to trigger Mode B. Raise to 3 for stricter confirmation.",
 
-  "leverage": 2,
-  "_leverage_note": "Max 2x — hard cap. Binary resolution means full loss is possible. Do NOT increase.",
+  "max_leverage": 5,
+  "_leverage_note": "Hard cap. Mode B uses median of top-5 traders, floor 2x. Mode A always 2x.",
 
-  "expiry_registry": {
-    "_note": "Populate with known outcome ticker expiry timestamps (Unix seconds). Example:",
-    "_example_TRUMP-WINS-2026-YES": 1780000000
-  },
+  "margin_per_slot": 40,
+  "_margin_note": "USD per position (20% of $200 budget). Adjust proportionally if budget changes.",
 
-  "_expiry_registry_howto": "The Hyperliquid API does not yet surface expiry dates in market_list_instruments for outcome tickers. Populate this registry manually from Hyperliquid docs or the prediction market interface. Keys = exact ticker names, values = Unix timestamp of resolution. Leave empty to trade all detected outcome tickers with unknown expiry (hours_to_expiry = -1.0, LLM gate will approve cautiously)."
+  "max_slots": 3,
+  "_slots_note": "Max concurrent positions. Can mix Mode A and Mode B.",
+
+  "daily_loss_limit_usd": 10.0,
+  "_daily_loss_note": "Halt new entries if daily realized loss hits this. 5% of $200 budget.",
+
+  "drawdown_halt_pct": 15.0,
+  "_drawdown_note": "Halt new entries if account drops 15% from peak.",
+
+  "max_consecutive_losses": 2,
+  "_consec_losses_note": "Trigger 2h cooldown after this many consecutive losses.",
+
+  "cooldown_minutes": 120,
+  "_cooldown_note": "Global cooldown after consecutive loss streak.",
+
+  "per_asset_cooldown_minutes": 360,
+  "_per_asset_note": "Per-ticker cooldown after a loss on that asset.",
+
+  "max_entries_per_day": 4,
+  "_max_entries_note": "Daily entry limit. Conservative — these are patient holds, not scalps.",
+
+  "mode_b_timeout_hours": 28,
+  "_mode_b_timeout_note": "Alpha expiry — smart money thesis (event front-run / liquidation cascade) decays in 24-36h.",
+
+  "mode_a_timeout_hours": 48,
+  "_mode_a_timeout_note": "Retail FOMO crowding cycle. 48h catches the full unwind.",
+
+  "weak_cut_hours": 3,
+  "_weak_cut_note": "Close flat positions (ROE between -5% and +2%) after this many hours. Cuts deadweight.",
+
+  "phase1_max_loss_pct": 15.0,
+  "_phase1_note": "Max ROE loss before force-close. Backed by native Hyperliquid SL at same threshold.",
+
+  "leaderboard_decay_threshold": 0.5,
+  "_decay_note": "Mode B only. Close if current leaderboard_count drops below entry_count * this value."
 }

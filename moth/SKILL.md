@@ -1,7 +1,7 @@
 ---
 name: moth-strategy
 description: >-
-  MOTH v3.0 — Dual-mode funding strategy on Hyperliquid perps.
+  MOTH v3.1 — Dual-mode funding strategy on Hyperliquid perps.
   Mode A (SHORT): fades assets with extreme funding (≥50% ann, ≥2h) where top-20
   leaderboard traders are absent — pure retail sentiment crowding, no smart money.
   Mode B (LONG): rides assets where ≥2 top-20 traders are long AND funding is elevated
