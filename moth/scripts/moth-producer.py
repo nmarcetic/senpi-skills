@@ -3,18 +3,14 @@
 # Copyright 2026 Nikola / Senpi (https://senpi.ai)
 # Licensed under MIT
 # Source: https://github.com/Senpi-ai/senpi-skills
-"""MOTH v1.0.0 Producer — Outcome market funding fade signal emitter.
+"""MOTH v3.1 Producer — Leaderboard crowding fade signal emitter.
 
-Detects extreme, persistent funding on Hyperliquid outcome (prediction) market
-tickers. Enters opposite to the crowded side to collect the funding stream.
-Hard expiry gate prevents entering (or re-entering) any ticker within
-force_close_hours_before_expiry of resolution.
+Dual-mode funding strategy on Hyperliquid perps:
+- Mode A (SHORT): fades extreme funding when top-20 traders are absent
+- Mode B (LONG): rides momentum when smart money is in AND funding confirms
 
-Archetype: funding-fade / contrarian → DSL preset: mean_reversion
-
-The producer's ONLY job: detect funding signals on outcome tickers and push
-them via client.push_signal(). It does NOT execute trades, does NOT manage
-DSL exits, does NOT hand-roll a daemon loop. The runtime owns all of that.
+This producer is the reference implementation for senpi-trading-runtime operators.
+For Hermes cron deployment, the cron prompt IS the runtime — this script is not used.
 
 Environment variables:
   SENPI_AUTH_TOKEN             — REQUIRED. Bearer token for MCP + signal POST.
@@ -33,9 +29,8 @@ from pathlib import Path
 
 # ── SDK path resolution ───────────────────────────────────────────────────────
 _sdk_candidates = [
-    str(Path.home() / ".openclaw" / "skills" / "senpi-trading-runtime"),
-    str(Path(os.environ.get("OPENCLAW_WORKSPACE", "/data/workspace")) / "skills" / "senpi-trading-runtime"),
     str(Path(__file__).resolve().parents[2] / "senpi-trading-runtime"),
+    str(Path.home() / "skills" / "senpi-trading-runtime"),
 ]
 _sdk_path = next(
     (p for p in _sdk_candidates if (Path(p) / "senpi_runtime_helpers").is_dir()),

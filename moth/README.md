@@ -11,7 +11,7 @@ Dual-mode autonomous funding strategy on Hyperliquid perps. Uses the top-20 lead
 
 Conflict → Mode B wins. No trade if neither fires.
 
-> Runs as a **Hermes cron job** (every 30 min) — no Railway, no OpenClaw, no Node.js host required.
+> Runs as a **Hermes cron job** (every 30 min) — no external host required.
 
 ---
 
@@ -21,7 +21,7 @@ Conflict → Mode B wins. No trade if neither fires.
 moth/
 ├── SKILL.md                    strategy docs + operator spec
 ├── README.md                   this file
-├── runtime.yaml                DSL config (reference for @senpi-ai/runtime operators)
+├── runtime.yaml                DSL config (reference for senpi-trading-runtime operators)
 ├── config/moth-config.json     operator-tunable thresholds
 ├── scripts/moth-producer.py    reference signal emitter
 ├── scripts/moth_config.py      config loader
@@ -33,7 +33,7 @@ moth/
 
 ---
 
-## Quick deploy (Hermes cron — recommended)
+## Quick deploy (Hermes cron)
 
 1. Create strategy wallet (one-time):
 ```
@@ -49,37 +49,15 @@ strategy_create_custom_strategy(
 
 3. State file auto-initialises at `/opt/data/moth_state.json` on first tick.
 
-That's it. MOTH messages you only when a position opens.
-
----
-
-## Deploy via @senpi-ai/runtime (alternative)
-
-```bash
-npm install @senpi-ai/runtime
-```
-
-Set env vars:
-```
-MOTH_WALLET=<strategy_wallet_address>
-TELEGRAM_CHAT_ID=<your_chat_id>
-MOTH_DECISION_MODEL=anthropic/claude-sonnet-4-5   # or any OpenRouter model
-SENPI_AUTH_TOKEN=<your_senpi_token>
-```
-
-```bash
-python scripts/moth-producer.py
-```
-
-The runtime reads `runtime.yaml` for DSL exit config.
+MOTH messages you only when a position opens.
 
 ---
 
 ## Risk stack
 
-**Three layers — belt + suspenders + the floor itself:**
+Three layers:
 
-1. **Native Hyperliquid SL** — 15% margin stop, market order, fires on-chain even if everything else goes down
+1. **Native Hyperliquid SL** — 15% margin stop, market order, fires on-chain
 2. **Senpi Ratchet Stop** — profit lock at +8/15/25/40% ROE (Senpi backend manages it)
 3. **State file** — daily loss limit ($10), 15% drawdown halt, 2-loss cooldown, 6h per-asset cooldown
 
