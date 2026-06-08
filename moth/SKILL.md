@@ -1,23 +1,18 @@
 ---
 name: moth-strategy
 description: >-
-  MOTH v1.1.0 — Outcome market funding fade on Hyperliquid prediction markets.
-  Detects extreme, persistent funding on outcome (binary) tickers where one
-  side is crowded by sentiment rather than information. Enters opposite to the
-  crowded side to collect the funding stream. Hard expiry gate (force-close
-  6h before resolution) is the primary risk control — outcome markets resolve
-  to 0 or 1, making expiry the single non-negotiable exit. Full risk stack:
-  native Hyperliquid SL (15% margin), Senpi ratchet stop (profit lock tiers),
-  and persistent state file for daily loss limit, drawdown halt, consecutive
-  loss cooldown, and per-asset cooldown. Runs as Hermes cron job — no external
-  runtime host required.
-  Leverage capped at 2x — binary resolution risk demands conservative sizing.
-  Named for the moth: attracted to the funding light, disciplined enough not
-  to burn on expiry.
+  MOTH v3.0 — Dual-mode funding strategy on Hyperliquid perps.
+  Mode A (SHORT): fades assets with extreme funding (≥50% ann, ≥2h) where top-20
+  leaderboard traders are absent — pure retail sentiment crowding, no smart money.
+  Mode B (LONG): rides assets where ≥2 top-20 traders are long AND funding is elevated
+  (≥30% ann, ≥1.5h) — smart money validated momentum with funding tailwind.
+  Conflict (both modes fire): Mode B wins. Leaderboard is the arbiter.
+  Full native risk stack: Hyperliquid SL, Senpi ratchet stop, persistent state file.
+  Runs as Hermes cron job every 30 min — no external runtime host required.
 license: MIT
 metadata:
   author: nikola
-  version: "2.2.0"
+  version: "3.0.0"
   platform: senpi
   exchange: hyperliquid
   requires:
@@ -25,104 +20,112 @@ metadata:
     - senpi_runtime_helpers
 ---
 
-# 🦋 MOTH v2.2.0 — Leaderboard Crowding Fade
+# 🦋 MOTH v3.0 — Dual-Mode Funding Strategy
 
-**Fade assets where top-20 leaderboard traders are crowded LONG and funding is extreme. Fully dynamic universe — no hardcoded tickers.**
+**Two signals. Two modes. One strategy.**
 
-Smart money builds the trade, retail piles in, funding starts paying the other side. MOTH enters SHORT, collects the funding stream while crowding persists, exits when the crowd unwinds or profit locks trigger.
+Funding tells you the crowd is stretched. The leaderboard tells you if smart money validated it.
 
-> *Named for the moth: attracted to the funding light, disciplined enough not to burn.*
+| Scenario | Leaderboard | Funding | Action |
+|---|---|---|---|
+| **Mode A — Retail fade** | < 2 top-20 longs | ≥50% ann, ≥2h | SHORT — fade retail, collect funding |
+| **Mode B — Smart money ride** | ≥2 top-20 longs | ≥30% ann, ≥1.5h | LONG — follow smart money, ride momentum |
+| Conflict (both fire on same asset) | — | — | Mode B wins |
+| Neither fires | — | — | No trade |
 
-## Signal logic
+> *The moth is attracted to the light — but now it knows the difference between a candle (retail noise) and a floodlight (smart money momentum).*
 
-Every 15 minutes:
+---
 
-1. Pull top-20 leaderboard (4h window) — build `hot_list` of assets with **≥2 top-20 traders LONG**
-2. For each hot-list asset: check `market_get_funding_history` — keep if:
-   - Annualized funding **≥ 30%**
-   - Persistence **≥ 1.5h** (confirmed signal, not a single-tick spike)
-   - `funding_direction = SHORT` (longs are paying — correct crowding direction)
-   - Trend INTENSIFYING or STABLE
-3. Score = `(funding_ann_pct / 100) × (persistence_hours / 6) × leaderboard_count`
-4. Enter **SHORT** on top candidate — 1 new position per tick max
-5. Leverage = median leverage of top-5 traders on that asset, capped at 5x, floor 2x
+## Signal Logic (every 30 min)
 
-## Exits (all enforced natively by Hermes cron — no external runtime needed)
+### Mode A — SHORT (retail fade)
+1. `market_get_funding_history()` — find assets with annualized funding ≥50%, persisting ≥2h, longs paying (direction=SHORT), trend INTENSIFYING or STABLE
+2. Cross-reference against `leaderboard_get_top(limit=20)` — **filter OUT any asset where ≥2 top-20 traders are long** (that's smart money, not retail)
+3. Remaining candidates: pure retail crowding → enter SHORT at 2x leverage
+4. Score = `(funding_ann / 100) × (persistence / 6) × 1.0`
+
+### Mode B — LONG (smart money momentum ride)
+1. `leaderboard_get_top(limit=20)` — build hot list of assets with ≥2 top-20 traders LONG
+2. For each: check `market_get_funding_history()` — keep if funding ≥30% ann, ≥1.5h, longs paying, trend INTENSIFYING or STABLE
+3. Enter LONG at median leverage of top-5 traders (capped 5x, floor 2x)
+4. Score = `(funding_ann / 100) × (persistence / 6) × leaderboard_count × 1.5`
+   (1.5× multiplier — smart money confirmation is higher conviction)
+
+**Take top-scored candidate across both modes. Mode B always beats Mode A on the same asset.**
+
+---
+
+## Exits (enforced natively by Hermes cron)
 
 | Trigger | Action |
 |---|---|
-| Expiry gate: ≤ 6h to resolution | CLOSE immediately (market) |
-| Price resolved: markPx < 0.05 or > 0.95 | CLOSE immediately |
-| Phase 1: ROE ≤ -15% | CLOSE (max loss) |
-| Hard timeout: position age > 48h | CLOSE |
-| Weak cut: > 2h open AND ROE < 2% | CLOSE (cut deadweight) |
-| Profit ratchet: ROE drops below locked level | CLOSE (via ratchet stop) |
+| ROE ≤ -15% | CLOSE (max loss — backed by native SL) |
+| Position age ≥ 36h | CLOSE (hard timeout) |
+| Age ≥ 3h AND -5% < ROE < +2% | CLOSE (weak cut — deadweight) |
+| Ratchet breach (peak locked) | CLOSE |
 
-## Risk guardrails (enforced via state file `/opt/data/moth_state.json`)
+## Risk Guardrails (`/opt/data/moth_state.json`)
 
 | Guardrail | Value |
 |---|---|
-| Daily loss limit | 5% of budget ($10) → halt entries |
+| Daily loss limit | $10 (5% of budget) → halt entries |
 | Drawdown halt | 15% from peak → halt entries |
-| Consecutive losses | 2 → 2h entry cooldown |
-| Per-asset cooldown | 6h after any loss on a ticker |
+| Consecutive losses | 2 → 2h cooldown |
+| Per-asset cooldown | 6h after any loss on that ticker |
 | Max entries per day | 4 |
 
-## Risk enforcement layers
+## Risk Enforcement Layers
 
 **Layer 1 — Native Hyperliquid SL**
-Every `create_position` call includes `stopLoss: {percentage: 15, orderType: MARKET}`.
-Hyperliquid enforces this natively — fires even if cron is down.
+Every `create_position` includes `stopLoss: {percentage: 15, orderType: MARKET}`. Fires natively even if cron is down.
 
 **Layer 2 — Senpi Ratchet Stop (profit lock)**
-After every open, `ratchet_stop_add()` is called with 5 tiered ROE locks:
-- +5% ROE → lock 30% of high-water
-- +10% → lock 50%
-- +15% → lock 65%
-- +25% → lock 80%
-- +40% → lock 90%
-Senpi backend manages trailing stop updates automatically.
+`ratchet_stop_add()` after every entry:
+- +8% ROE → lock 40% of high-water
+- +15% → lock 60%
+- +25% → lock 75%
+- +40% → lock 88%
 
 **Layer 3 — Persistent state file**
-`/opt/data/moth_state.json` tracks daily PnL, peak account value, consecutive losses,
-cooldown timestamps, and per-asset cooldowns across cron ticks.
+`/opt/data/moth_state.json` tracks across ticks: daily PnL, peak value, consecutive losses, cooldowns, open position metadata.
 
-## Operator spec
+## Operator Spec
 
 | Field | Value |
 |---|---|
-| Universe | 100% leaderboard-derived — top-20 (4h window), ≥2 traders long |
-| Signal | Leaderboard crowding + funding fade — SHORT only |
-| Tick cadence | 15 min (Hermes cron) |
-| Leverage | Median of top-5 traders on asset, cap 5x, floor 2x |
+| Universe | Dynamic — leaderboard-derived (Mode B) + all extreme-funding assets (Mode A) |
+| Mode A direction | SHORT only (retail fade) |
+| Mode B direction | LONG only (momentum ride) |
+| Tick cadence | 30 min (Hermes cron) |
+| Mode A leverage | 2x (conservative — no smart money validation) |
+| Mode B leverage | Median of top-5 traders, cap 5x, floor 2x |
 | Margin per slot | 20% of budget ($40 on $200) |
-| Slots | 3 concurrent |
-| DSL preset | Phase1 max_loss 15%, Phase2 ratchet tiers (8/15/25/40%), hard_timeout 36h, weak_cut 3h |
-| Persistence threshold | 1.5h (early entry — catches crowding while still building) |
-| Funding threshold | ≥30% annualized, direction SHORT (longs paying) |
+| Slots | 3 concurrent (can mix modes) |
+| Mode A funding threshold | ≥50% annualized, ≥2h persistence |
+| Mode B funding threshold | ≥30% annualized, ≥1.5h persistence |
 
-## File inventory
+## File Inventory
 
 ```
 moth/
-├── SKILL.md                          ← this file
-├── README.md                         ← deploy instructions
-├── runtime.yaml                      ← runtime config (reference — Hermes cron is the runtime)
-├── config/moth-config.json           ← operator tunables
-├── scripts/moth-producer.py          ← signal emitter (reference implementation)
-├── scripts/moth_config.py            ← SDK boilerplate
-├── references/skill-attribution.md  ← attribution
+├── SKILL.md                         ← this file (v3.0.0)
+├── README.md                        ← deploy instructions
+├── runtime.yaml                     ← runtime config (v3.0 dual-mode)
+├── config/moth-config.json          ← operator-tunable thresholds
+├── scripts/moth-producer.py         ← reference signal emitter
+├── scripts/moth_config.py           ← config loader
+├── references/skill-attribution.md ← attribution
 └── tests/
     ├── __init__.py
-    └── test_moth_producer.py         ← 29 unit + integration tests
+    └── test_moth_producer.py        ← 29 unit + integration tests
 ```
 
 State file (runtime, not committed):
 ```
-/opt/data/moth_state.json             ← persistent risk state across cron ticks
+/opt/data/moth_state.json            ← persistent risk state across cron ticks
 ```
 
 ## Skill Attribution
 
-When creating a strategy with this skill, include `skill_name` and `skill_version`
-in the call. See `references/skill-attribution.md` for details.
+When creating a strategy with this skill, include `skill_name` and `skill_version` in the call. See `references/skill-attribution.md` for details.
