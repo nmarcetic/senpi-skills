@@ -1,61 +1,74 @@
 name: moth-tracker
 version: 1                         # plugin SCHEMA version — always 1
-description: "Fade extreme funding on Hyperliquid outcome markets. Enter opposite the crowded side, collect the funding stream, hard-exit before resolution."
+description: "MOTH v2.2 — Leaderboard crowding fade on Hyperliquid perps. Fades assets where top-20 leaderboard traders are crowded LONG and funding is extreme. Fully dynamic universe — no hardcoded tickers."
 
 strategy:
   wallet: "${MOTH_WALLET}"
-  slots: 3                         # max 3 concurrent outcome positions
-  margin_pct: 20                   # 20% of budget per slot
+  slots: 3                         # max 3 concurrent positions
+  margin_pct: 20                   # 20% of budget per slot = $40 on $200
   enabled: true
 
 notifications:
   telegram_chat_id: "${TELEGRAM_CHAT_ID}"
 
+# ── Signal: leaderboard crowding + funding alignment ──────────────────────────
+# Universe is 100% leaderboard-derived. Every tick:
+#   1. Pull top-20 leaderboard (4h window)
+#   2. Build hot_list: assets with ≥2 top-20 traders LONG
+#   3. Filter to: funding ≥30% annualized, persisting ≥1.5h,
+#                 longs paying (funding_direction=SHORT), trend INTENSIFYING or STABLE
+#   4. Score = (funding_ann_pct / 100) × (persistence_hours / 6) × leaderboard_count
+#   5. Enter SHORT on top candidate
+#
+# Leverage: median leverage of top-5 leaderboard traders on that asset, capped at 5x, floor 2x.
+# Direction: SHORT only — we fade crowded longs, never go long.
+
 scanners:
-  - name: position_tracker         # REQUIRED for DSL exit management — leave verbatim
+  - name: position_tracker         # REQUIRED for exit management — leave verbatim
     type: position_tracker
     interval: 10s
 
-  - name: moth_signals             # MUST match SCANNER_NAME in moth-producer.py
-    type: external_scanner         # push-driven — producer POSTs signals, no interval
+  - name: moth_signals
+    type: external_scanner
     outputs: { signals: true, context: false }
     config:
       fields:
-        # All keys here must match data={} keys emitted by moth-producer.py
-        funding_annualized_pct: { type: number, required: true }
-        persistent_hours:       { type: number, required: true }
-        mark_px:                { type: number, required: true }
-        oi_usd:                 { type: number, required: true }
-        hours_to_expiry:        { type: number, required: true }   # -1.0 = unknown
-        leverage_used:          { type: number, required: true }
+        funding_annualized_pct:  { type: number, required: true }
+        persistence_hours:       { type: number, required: true }   # threshold: 1.5h
+        leaderboard_count:       { type: number, required: true }   # min: 2
+        leverage_used:           { type: number, required: true }   # median from top-5, cap 5x
+        score:                   { type: number, required: true }   # (ann/100) × (persist/6) × count
 
 actions:
   - name: moth_entry
     action_type: OPEN_POSITION
     decision_mode: llm
-    decision_model: ${MOTH_DECISION_MODEL}   # bare model name, no provider prefix
+    decision_model: ${MOTH_DECISION_MODEL}
     scanners: [moth_signals]
     min_confidence: 7
     params:
+      direction: SHORT                          # ALWAYS short — fading crowded longs
       order_type: FEE_OPTIMIZED_LIMIT
       fee_optimized_limit_options:
         ensure_execution_as_taker: true
-        execution_timeout_seconds: 20        # outcome markets can be illiquid — give 20s
-      leverage: 2                            # hard 2x cap — binary resolution risk
+        execution_timeout_seconds: 15           # fast entry — perps are liquid
+      stop_loss:
+        percentage: 15                          # 15% of MARGIN — native HL SL
+        order_type: MARKET                      # guaranteed fill
     context:
       - { type: signal, scanner: moth_signals }
     decision_prompt: |
-      You are evaluating a funding fade signal on a Hyperliquid OUTCOME (prediction) market.
-      These markets resolve to 0 or 1 — the single greatest risk is holding through expiry
-      on the wrong side. Approve ONLY if ALL of the following are true:
+      You are evaluating a leaderboard crowding fade signal on a Hyperliquid PERP.
+      Approve ONLY if ALL conditions are true:
 
-      1. funding_annualized_pct >= 50  (extreme crowding, not noise)
-      2. persistent_hours >= 6         (sustained, not a spike)
-      3. mark_px between 0.08 and 0.92 (not already resolving)
-      4. oi_usd >= 100000              (enough liquidity to exit)
-      5. hours_to_expiry > 24 OR hours_to_expiry == -1.0  (-1 means unknown, allow with caution)
+      1. funding_annualized_pct >= 30    (extreme crowding — longs are paying)
+      2. persistence_hours >= 1.5        (confirmed signal, not a single-tick spike)
+      3. leaderboard_count >= 2          (≥2 top-20 traders long this asset)
+      4. funding_direction == SHORT      (longs paying — correct crowding direction)
+      5. leverage_used <= 5              (never exceed 5x cap)
 
-      If ANY condition fails, return confidence 0 and explain why.
+      If ANY condition fails → return confidence 0 and explain why.
+      The trade is always SHORT — we fade the crowded longs.
 
       Signal data:
       {{signal_moth_signals}}
@@ -64,24 +77,54 @@ exit:
   engine: dsl
   interval_seconds: 30
   dsl_preset:
-    # mean_reversion — tight, fast snapback, time-cuts on. Correct for funding fades.
-    hard_timeout: { enabled: true, interval_in_minutes: 2880 }       # 48h max hold
-    weak_peak_cut: { enabled: true, interval_in_minutes: 120, min_value: 2.0 }
-    phase1: { enabled: true, max_loss_pct: 15.0, retrace_threshold: 6, consecutive_breaches_required: 1 }
+    # ── Phase 1 — Stop loss ───────────────────────────────────────────────────
+    phase1:
+      enabled: true
+      max_loss_pct: 15.0                        # ROE ≤ -15% → cut (backed by native HL SL)
+      retrace_threshold: 6
+      consecutive_breaches_required: 1
+
+    # ── Phase 2 — Profit ratchet ──────────────────────────────────────────────
     phase2:
       enabled: true
       tiers:
-        - { trigger_pct: 5,  lock_hw_pct: 30 }   # at +5% ROE, lock 30% of high-water
-        - { trigger_pct: 10, lock_hw_pct: 50 }   # at +10%, lock 50%
-        - { trigger_pct: 15, lock_hw_pct: 65 }   # at +15%, lock 65%
-        - { trigger_pct: 25, lock_hw_pct: 80 }   # at +25%, lock 80%
-        - { trigger_pct: 40, lock_hw_pct: 90 }   # at +40%, lock 90%
+        - { trigger_pct: 8,  lock_hw_pct: 40 }  # at +8% ROE → lock 40% of high-water
+        - { trigger_pct: 15, lock_hw_pct: 60 }  # at +15% → lock 60%
+        - { trigger_pct: 25, lock_hw_pct: 75 }  # at +25% → lock 75%
+        - { trigger_pct: 40, lock_hw_pct: 88 }  # at +40% → lock 88%
+
+    # ── Hard timeout ─────────────────────────────────────────────────────────
+    hard_timeout:
+      enabled: true
+      interval_in_minutes: 2160                 # 36h — perps move faster than outcome markets
+
+    # ── Weak position cut ─────────────────────────────────────────────────────
+    weak_peak_cut:
+      enabled: true
+      interval_in_minutes: 180                  # 3h open with < 2% ROE → cut deadweight
+      min_value: 2.0
 
 risk:
   guard_rails:
-    daily_loss_limit_pct: 5           # outcome markets can gap — tighter than default
-    max_entries_per_day: 4            # conservative — outcome positions are patient holds
-    max_consecutive_losses: 2         # 2 bad reads = pause and reassess
-    cooldown_minutes: 120             # 2h cooldown after consecutive losses
-    drawdown_halt_pct: 15             # halt if 15% drawdown on the strategy budget
-    per_asset_cooldown_minutes: 360   # 6h cooldown per ticker after a loss
+    daily_loss_limit_pct: 5          # 5% of budget = $10/day
+    max_entries_per_day: 4
+    max_consecutive_losses: 2        # 2 bad trades → 2h cooldown
+    cooldown_minutes: 120
+    drawdown_halt_pct: 15            # 15% drawdown from peak → halt entries
+    per_asset_cooldown_minutes: 360  # 6h cooldown per asset after a loss
+
+# ── Ratchet Stop (Senpi native — runs in parallel with DSL) ───────────────────
+# After every entry the cron also calls ratchet_stop_add() with these tiers.
+# The DSL phase2 and ratchet stop are intentionally redundant —
+# belt-and-suspenders for profit protection.
+ratchet_stop_tiers:
+  - { triggerRoe: 0.08, lockRoe: 0.032 }   # +8% ROE → lock to 3.2% floor
+  - { triggerRoe: 0.15, lockRoe: 0.09  }   # +15% → lock to 9%
+  - { triggerRoe: 0.25, lockRoe: 0.1875}   # +25% → lock to 18.75%
+  - { triggerRoe: 0.40, lockRoe: 0.352 }   # +40% → lock to 35.2%
+
+# ── State file (Hermes cron runtime) ─────────────────────────────────────────
+# /opt/data/moth_state.json tracks across cron ticks:
+#   daily_window: {date_utc, realized_pnl_today, peak_account_value, halted, entries_today}
+#   consecutive_losses, cooldown_until_ts, per_asset_cooldown, open_positions
+# This is the source of truth for all risk guardrails not enforced natively by HL.

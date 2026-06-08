@@ -17,7 +17,7 @@ description: >-
 license: MIT
 metadata:
   author: nikola
-  version: "1.1.0"
+  version: "2.2.0"
   platform: senpi
   exchange: hyperliquid
   requires:
@@ -25,27 +25,27 @@ metadata:
     - senpi_runtime_helpers
 ---
 
-# 🦋 MOTH v1.1.0 — Outcome Market Funding Fade
+# 🦋 MOTH v2.2.0 — Leaderboard Crowding Fade
 
-**Collect funding from sentiment-crowded prediction markets. Exit before they resolve.**
+**Fade assets where top-20 leaderboard traders are crowded LONG and funding is extreme. Fully dynamic universe — no hardcoded tickers.**
 
-Outcome markets on Hyperliquid are binary: price converges to 0 or 1 at resolution.
-When sentiment crowds one side (e.g. everyone buying YES), funding becomes extreme —
-YES holders pay NO holders every hour. MOTH enters the uncrowded side, collects the
-funding stream while crowding persists, and hard-exits before the resolution cliff.
+Smart money builds the trade, retail piles in, funding starts paying the other side. MOTH enters SHORT, collects the funding stream while crowding persists, exits when the crowd unwinds or profit locks trigger.
+
+> *Named for the moth: attracted to the funding light, disciplined enough not to burn.*
 
 ## Signal logic
 
-Every 5 minutes:
+Every 15 minutes:
 
-1. Scan all instruments via `market_list_instruments` — filter to outcome tickers
-   (detected by ticker pattern: contain `-YES`, `-NO`, `-WILL`, `-WINS`, or have
-   markPx between 0.01 and 0.99 with OI > $100k)
-2. For each candidate: check annualized funding > `min_funding_annualized_pct` (default 50%)
-   and persistence > `min_persistence_hours` (default 6h)
-3. Check days-to-expiry > `min_days_to_expiry` (default 1.0) — never enter within 24h
-4. Check price not already resolving: 0.05 < price < 0.95
-5. Score by funding magnitude × persistence hours — emit highest-conviction signal
+1. Pull top-20 leaderboard (4h window) — build `hot_list` of assets with **≥2 top-20 traders LONG**
+2. For each hot-list asset: check `market_get_funding_history` — keep if:
+   - Annualized funding **≥ 30%**
+   - Persistence **≥ 1.5h** (confirmed signal, not a single-tick spike)
+   - `funding_direction = SHORT` (longs are paying — correct crowding direction)
+   - Trend INTENSIFYING or STABLE
+3. Score = `(funding_ann_pct / 100) × (persistence_hours / 6) × leaderboard_count`
+4. Enter **SHORT** on top candidate — 1 new position per tick max
+5. Leverage = median leverage of top-5 traders on that asset, capped at 5x, floor 2x
 
 ## Exits (all enforced natively by Hermes cron — no external runtime needed)
 
@@ -91,14 +91,15 @@ cooldown timestamps, and per-asset cooldowns across cron ticks.
 
 | Field | Value |
 |---|---|
-| Universe | Hyperliquid outcome tickers (auto-detected) |
-| Signal | Funding fade — enter opposite crowded side |
-| Tick cadence | 300s |
-| Leverage | 2x (hard cap — binary resolution risk) |
-| Margin per slot | 20% of budget |
+| Universe | 100% leaderboard-derived — top-20 (4h window), ≥2 traders long |
+| Signal | Leaderboard crowding + funding fade — SHORT only |
+| Tick cadence | 15 min (Hermes cron) |
+| Leverage | Median of top-5 traders on asset, cap 5x, floor 2x |
+| Margin per slot | 20% of budget ($40 on $200) |
 | Slots | 3 concurrent |
-| DSL preset | `mean_reversion` (tight, fast snapback) |
-| Hard timeout | 48h |
+| DSL preset | Phase1 max_loss 15%, Phase2 ratchet tiers (8/15/25/40%), hard_timeout 36h, weak_cut 3h |
+| Persistence threshold | 1.5h (early entry — catches crowding while still building) |
+| Funding threshold | ≥30% annualized, direction SHORT (longs paying) |
 
 ## File inventory
 
