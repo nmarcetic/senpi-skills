@@ -12,7 +12,7 @@ description: >-
 license: MIT
 metadata:
   author: nikola
-  version: "3.0.0"
+  version: "3.1.0"
   platform: senpi
   exchange: hyperliquid
   requires:
@@ -26,11 +26,11 @@ metadata:
 
 Funding tells you the crowd is stretched. The leaderboard tells you if smart money validated it.
 
-| Scenario | Leaderboard | Funding | Action |
-|---|---|---|---|
-| **Mode A — Retail fade** | < 2 top-20 longs | ≥50% ann, ≥2h | SHORT — fade retail, collect funding |
-| **Mode B — Smart money ride** | ≥2 top-20 longs | ≥30% ann, ≥1.5h | LONG — follow smart money, ride momentum |
-| Conflict (both fire on same asset) | — | — | Mode B wins |
+| Scenario | Leaderboard | Funding | Direction | Timeout |
+|---|---|---|---|---|
+| **Mode A — Retail fade** | < 2 top-20 longs | ≥50% ann, ≥2h | SHORT | 48h (retail FOMO persists) |
+| **Mode B — Smart money ride** | ≥2 top-20 longs | ≥30% ann, ≥1.5h | LONG | 28h (alpha decays fast) |
+| Conflict (both fire on same asset) | — | — | Mode B wins | — |
 | Neither fires | — | — | No trade |
 
 > *The moth is attracted to the light — but now it knows the difference between a candle (retail noise) and a floodlight (smart money momentum).*
@@ -61,8 +61,10 @@ Funding tells you the crowd is stretched. The leaderboard tells you if smart mon
 | Trigger | Action |
 |---|---|
 | ROE ≤ -15% | CLOSE (max loss — backed by native SL) |
-| Position age ≥ 36h | CLOSE (hard timeout) |
+| Mode B age ≥ 28h | CLOSE (alpha expiry — smart money thesis burned out) |
+| Mode A age ≥ 48h | CLOSE (retail cycle complete) |
 | Age ≥ 3h AND -5% < ROE < +2% | CLOSE (weak cut — deadweight) |
+| Mode B: leaderboard_count drops to < 50% of entry count | CLOSE (leaderboard decay — smart money exited) |
 | Ratchet breach (peak locked) | CLOSE |
 
 ## Risk Guardrails (`/opt/data/moth_state.json`)

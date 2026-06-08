@@ -5,7 +5,7 @@ always include `skill_name` and `skill_version`:
 
 ```json
 "skill_name": "moth",
-"skill_version": "3.0.0"
+"skill_version": "3.1.0"
 ```
 
 This is required for attribution and performance tracking. Example:

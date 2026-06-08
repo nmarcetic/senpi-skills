@@ -1,6 +1,6 @@
 name: moth-tracker
 version: 1                         # plugin SCHEMA version — always 1
-description: "MOTH v3.0 — Dual-mode funding strategy. Mode A shorts retail-crowded assets (no smart money). Mode B longs smart-money-validated momentum. Leaderboard determines which mode fires."
+description: "MOTH v3.1 — Dual-mode funding strategy. Mode A shorts retail-crowded assets (no smart money). Mode B longs smart-money-validated momentum. Leaderboard determines which mode fires."
 
 strategy:
   wallet: "${MOTH_WALLET}"
@@ -106,9 +106,12 @@ exit:
         - { trigger_pct: 25, lock_hw_pct: 75 }
         - { trigger_pct: 40, lock_hw_pct: 88 }
 
+    # Mode B timeout: 28h (alpha expiry — smart money thesis decays fast)
+    # Mode A timeout: 48h (retail FOMO cycle — persists longer)
+    # NOTE: runtime.yaml hard_timeout is a fallback; cron enforces mode-specific timeouts natively
     hard_timeout:
       enabled: true
-      interval_in_minutes: 2160    # 36h
+      interval_in_minutes: 1680    # 28h (Mode B; Mode A cron uses 48h = 2880 min)
 
     weak_peak_cut:
       enabled: true
