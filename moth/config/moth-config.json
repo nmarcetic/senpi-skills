@@ -1,0 +1,60 @@
+{
+  "_comment": "MOTH v3.1 — operator-tunable config. All thresholds are conservative defaults.",
+
+  "mode_b_funding_threshold": 30.0,
+  "_mode_b_note": "Mode B (LONG — smart money ride): min annualized funding %. Smart money confirmed + funding elevated.",
+
+  "mode_a_funding_threshold": 50.0,
+  "_mode_a_note": "Mode A (SHORT — retail fade): min annualized funding %. No smart money, pure retail crowding.",
+
+  "mode_b_persistence_hours": 1.5,
+  "_mode_b_persistence_note": "Mode B: 1.5h — early entry, catches crowding while still building.",
+
+  "mode_a_persistence_hours": 2.0,
+  "_mode_a_persistence_note": "Mode A: 2h — enough to confirm it's not a single-tick spike.",
+
+  "leaderboard_min_count": 2,
+  "_leaderboard_note": "Min top-20 traders long an asset to trigger Mode B. Raise to 3 for stricter confirmation.",
+
+  "max_leverage": 5,
+  "_leverage_note": "Hard cap. Mode B uses median of top-5 traders, floor 2x. Mode A always 2x.",
+
+  "margin_per_slot": 40,
+  "_margin_note": "USD per position (20% of $200 budget). Adjust proportionally if budget changes.",
+
+  "max_slots": 3,
+  "_slots_note": "Max concurrent positions. Can mix Mode A and Mode B.",
+
+  "daily_loss_limit_usd": 10.0,
+  "_daily_loss_note": "Halt new entries if daily realized loss hits this. 5% of $200 budget.",
+
+  "drawdown_halt_pct": 15.0,
+  "_drawdown_note": "Halt new entries if account drops 15% from peak.",
+
+  "max_consecutive_losses": 2,
+  "_consec_losses_note": "Trigger 2h cooldown after this many consecutive losses.",
+
+  "cooldown_minutes": 120,
+  "_cooldown_note": "Global cooldown after consecutive loss streak.",
+
+  "per_asset_cooldown_minutes": 360,
+  "_per_asset_note": "Per-ticker cooldown after a loss on that asset.",
+
+  "max_entries_per_day": 4,
+  "_max_entries_note": "Daily entry limit. Conservative — these are patient holds, not scalps.",
+
+  "mode_b_timeout_hours": 28,
+  "_mode_b_timeout_note": "Alpha expiry — smart money thesis (event front-run / liquidation cascade) decays in 24-36h.",
+
+  "mode_a_timeout_hours": 48,
+  "_mode_a_timeout_note": "Retail FOMO crowding cycle. 48h catches the full unwind.",
+
+  "weak_cut_hours": 3,
+  "_weak_cut_note": "Close flat positions (ROE between -5% and +2%) after this many hours. Cuts deadweight.",
+
+  "phase1_max_loss_pct": 15.0,
+  "_phase1_note": "Max ROE loss before force-close. Backed by native Hyperliquid SL at same threshold.",
+
+  "leaderboard_decay_threshold": 0.5,
+  "_decay_note": "Mode B only. Close if current leaderboard_count drops below entry_count * this value."
+}
