@@ -1,0 +1,137 @@
+name: moth-tracker
+version: 1                         # plugin SCHEMA version — always 1
+description: "MOTH v3.1 — Dual-mode funding strategy. Mode A shorts retail-crowded assets (no smart money). Mode B longs smart-money-validated momentum. Leaderboard determines which mode fires."
+
+strategy:
+  wallet: "${MOTH_WALLET}"
+  slots: 3                         # max 3 concurrent — can mix Mode A and Mode B
+  margin_pct: 20                   # 20% of budget per slot = $40 on $200
+  enabled: true
+
+notifications:
+  telegram_chat_id: "${TELEGRAM_CHAT_ID}"
+
+# ── Dual-mode signal logic ────────────────────────────────────────────────────
+#
+# MODE A — SHORT (retail fade)
+#   Funding ≥50% ann + ≥2h persistence + top-20 leaderboard < 2 traders long
+#   → pure sentiment crowding, no smart money confirmation → FADE it
+#   Leverage: 2x (conservative — no smart money validates the move)
+#
+# MODE B — LONG (smart money momentum ride)
+#   ≥2 top-20 traders LONG + funding ≥30% ann + ≥1.5h persistence
+#   → smart money validated AND momentum is real → RIDE it
+#   Leverage: median of top-5 traders, capped 5x, floor 2x
+#
+# CONFLICT: asset qualifies for both → Mode B wins (smart money trumps retail fade)
+# NO TRADE: neither signal fires
+#
+# Scan cadence: 30 min (Hermes cron)
+
+scanners:
+  - name: position_tracker
+    type: position_tracker
+    interval: 10s
+
+  - name: moth_signals
+    type: external_scanner
+    outputs: { signals: true, context: false }
+    config:
+      fields:
+        mode:                    { type: string, required: true }   # "A" or "B"
+        direction:               { type: string, required: true }   # "LONG" or "SHORT"
+        funding_annualized_pct:  { type: number, required: true }
+        persistence_hours:       { type: number, required: true }
+        leaderboard_count:       { type: number, required: true }   # 0 for Mode A
+        leverage_used:           { type: number, required: true }
+        score:                   { type: number, required: true }
+
+actions:
+  - name: moth_entry
+    action_type: OPEN_POSITION
+    decision_mode: llm
+    decision_model: ${MOTH_DECISION_MODEL}
+    scanners: [moth_signals]
+    min_confidence: 7
+    params:
+      order_type: FEE_OPTIMIZED_LIMIT
+      fee_optimized_limit_options:
+        ensure_execution_as_taker: true
+        execution_timeout_seconds: 15
+      stop_loss:
+        percentage: 15
+        order_type: MARKET
+    context:
+      - { type: signal, scanner: moth_signals }
+    decision_prompt: |
+      You are evaluating a MOTH dual-mode funding signal on Hyperliquid perps.
+
+      MODE A (SHORT — retail fade): Approve if ALL true:
+        1. mode == "A"
+        2. direction == "SHORT"
+        3. funding_annualized_pct >= 50
+        4. persistence_hours >= 2.0
+        5. leaderboard_count < 2  (smart money NOT in it)
+        6. leverage_used <= 2
+
+      MODE B (LONG — smart money ride): Approve if ALL true:
+        1. mode == "B"
+        2. direction == "LONG"
+        3. leaderboard_count >= 2
+        4. funding_annualized_pct >= 30
+        5. persistence_hours >= 1.5
+        6. leverage_used <= 5
+
+      If mode is "B", use direction LONG. If mode is "A", use direction SHORT.
+      If ANY condition fails → return confidence 0 and explain why.
+
+      Signal data:
+      {{signal_moth_signals}}
+
+exit:
+  engine: dsl
+  interval_seconds: 30
+  dsl_preset:
+    phase1:
+      enabled: true
+      max_loss_pct: 15.0
+      retrace_threshold: 6
+      consecutive_breaches_required: 1
+
+    phase2:
+      enabled: true
+      tiers:
+        - { trigger_pct: 8,  lock_hw_pct: 40 }
+        - { trigger_pct: 15, lock_hw_pct: 60 }
+        - { trigger_pct: 25, lock_hw_pct: 75 }
+        - { trigger_pct: 40, lock_hw_pct: 88 }
+
+    # Mode B timeout: 28h (alpha expiry — smart money thesis decays fast)
+    # Mode A timeout: 48h (retail FOMO cycle — persists longer)
+    # NOTE: runtime.yaml hard_timeout is a fallback; cron enforces mode-specific timeouts natively
+    hard_timeout:
+      enabled: true
+      interval_in_minutes: 1680    # 28h (Mode B; Mode A cron uses 48h = 2880 min)
+
+    weak_peak_cut:
+      enabled: true
+      interval_in_minutes: 180     # 3h
+      min_value: 2.0
+
+risk:
+  guard_rails:
+    daily_loss_limit_pct: 5
+    max_entries_per_day: 4
+    max_consecutive_losses: 2
+    cooldown_minutes: 120
+    drawdown_halt_pct: 15
+    per_asset_cooldown_minutes: 360
+
+ratchet_stop_tiers:
+  - { triggerRoe: 0.08, lockRoe: 0.032 }
+  - { triggerRoe: 0.15, lockRoe: 0.09  }
+  - { triggerRoe: 0.25, lockRoe: 0.1875}
+  - { triggerRoe: 0.40, lockRoe: 0.352 }
+
+# State file: /opt/data/moth_state.json
+# Tracks: daily_window, consecutive_losses, cooldown_until_ts, per_asset_cooldown, open_positions
