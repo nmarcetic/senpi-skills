@@ -62,12 +62,12 @@ For each asset NOT already held (BTC, ETH, SOL, HYPE, xyz:BRENTOIL, xyz:CL):
   - trend_1h = "BULLISH" if EMA9 > EMA21 else "BEARISH"
 
   Determine signal side:
-  - If RSI_15m <= 30 → candidate side = LONG (oversold)
-  - If RSI_15m >= 70 → candidate side = SHORT (overbought)
+  - If RSI_15m <= 40 → candidate side = LONG (oversold)
+  - If RSI_15m >= 60 → candidate side = SHORT (overbought)
   - Else → skip asset (no extreme)
 
   Score:
-  - RSI extreme pts: RSI<=20 or >=80 → +3; <=25 or >=75 → +2; <=30 or >=70 → +1
+  - RSI extreme pts: RSI<=20 or >=80 → +3; <=25 or >=75 → +2; <=40 or >=60 → +1
   - Stretch pts: stretch_pct >= 1.6% → +2; >= 0.8% → +1
   - Trend filter: LONG and trend_1h==BULLISH → +1; LONG and trend_1h==BEARISH → -2; SHORT and trend_1h==BEARISH → +1; SHORT and trend_1h==BULLISH → -2
   - Funding: check funding_rate from instrument context. If LONG and rate < 0 → +1; if SHORT and rate > 0 → +1
@@ -132,9 +132,9 @@ Update state file:
 
 Write updated state to /opt/data/spider_scalp_state.json.
 
-REPORTING RULE — CRITICAL:
-ONLY send a message if a position was SUCCESSFULLY opened in Phase 3 (create_position returned FILLED or RESTING).
-On all other outcomes (no signal, gates blocked, exits only, errors) → produce NO output. Stay completely silent.
+## OUTPUT RULE — ABSOLUTE
 
-If position opened, output EXACTLY this format:
-🕷️ SCALP [LONG/SHORT] {coin} @ ${price} | score={score} | margin=${margin} | 5x | SL 5% | ratchet armed
+Did create_position succeed (FILLED or RESTING) in Phase 3?
+
+- YES → output exactly one line: 🕷️ SCALP [LONG/SHORT] {coin} @ ${price} | score={score} | margin=${margin} | 5x | SL 5% | ratchet armed
+- NO → output nothing. Zero characters. No summary. No confirmation. No "scan complete". Empty string. STOP.

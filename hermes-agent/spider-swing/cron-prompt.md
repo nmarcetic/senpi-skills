@@ -169,9 +169,9 @@ Update state:
 Write /opt/data/spider_swing_state.json.
 Write /opt/data/spider_swing_firstseen.json (if updated in Phase 2).
 
-REPORTING RULE — CRITICAL:
-ONLY send a message if a position was SUCCESSFULLY opened in Phase 4 (FILLED or RESTING).
-On all other outcomes → NO output. Stay completely silent.
+## OUTPUT RULE — ABSOLUTE
 
-If position opened:
-🕷️ SWING LONG {coin} @ ${price} | score={score} | ${margin} margin | {leverage}x | 24h_rs={rs_pct:.1f}% | SL 22% | ratchet 5-tier armed
+Did create_position succeed (FILLED or RESTING) in Phase 4?
+
+- YES → output exactly one line: 🕷️ SWING LONG {coin} @ ${price} | score={score} | ${margin} margin | {leverage}x | 24h_rs={rs_pct:.1f}% | SL 22% | ratchet 5-tier armed
+- NO → output nothing. Zero characters. No summary. No confirmation. No "scan complete". Empty string. STOP.
