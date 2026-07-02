@@ -151,7 +151,9 @@ def close_position(wallet: str, asset: str, reason: str) -> dict:
 
 def get_open_positions(wallet: str) -> list:
     data = call_tool("strategy_get_clearinghouse_state", {"strategy_wallet": wallet})
-    return data["main"]["assetPositions"]
+    positions = data.get("main", {}).get("assetPositions", [])
+    # Filter out empty/invalid entries
+    return [p for p in positions if p.get("position") and p["position"].get("coin")]
 
 # ── Main tick ─────────────────────────────────────────────────────────────────
 def notify(msg: str):
@@ -174,7 +176,11 @@ def run():
     state["last_check"] = now
 
     # ── Phase 1: Exit check ───────────────────────────────────────────────────
-    live_positions = {p["position"]["coin"]: p for p in get_open_positions(wallet)}
+    try:
+        live_positions = {p["position"]["coin"]: p for p in get_open_positions(wallet)}
+    except Exception as e:
+        notify(f"⚠️ Sniper: clearinghouse fetch failed ({e}), skipping tick")
+        sys.exit(0)
 
     for asset in list(state["open_positions"].keys()):
         if asset not in live_positions:
