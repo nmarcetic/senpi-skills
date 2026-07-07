@@ -5,7 +5,7 @@ SNIPER v1.0.0 — Whale Consensus Following Strategy
 Logic:
   - Every 4h: fetch top-10 leaderboard whales
   - For each of BTC/ETH/HYPE/SOL: count unique whales holding same direction
-  - If >= 7/10 whales in SAME direction (2/3 BFT majority, no mixed signal): open position
+  - If >= 5/10 whales in SAME direction (simple majority, no mixed signal): open position
   - Capital: $500 margin per trade, 3x leverage
   - TP: 10% ROE (re-entry 1: 8%, re-entry 2: 5%)
   - SL: 30% ROE (re-entry 1: 20%, re-entry 2: 15%)
@@ -27,7 +27,7 @@ MCP_URL           = "https://mcp.prod.senpi.ai/mcp"
 ASSETS            = ["BTC", "ETH", "HYPE", "SOL"]
 CAPITAL_PER_TRADE = 500.0    # $500 margin per position
 LEVERAGE          = 3
-CONSENSUS_MIN     = 7        # min whales same direction (2/3 BFT majority of top 10)
+CONSENSUS_MIN     = 5        # min whales same direction (simple majority of top 10)
 WHALE_COUNT       = 10       # top N whales to check
 MAX_REENTRIES     = 2        # 0=entry, 1=re1, 2=re2 (3 total)
 
