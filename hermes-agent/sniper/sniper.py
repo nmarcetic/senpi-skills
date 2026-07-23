@@ -5,7 +5,7 @@ SNIPER v1.0.0 — Whale Consensus Following Strategy
 Logic:
   - Every 4h: fetch top-10 leaderboard whales
   - For each of BTC/ETH/HYPE/SOL: count unique whales holding same direction
-  - If >= 3/10 whales in SAME direction (no mixed signal): open position
+  - If >= 5/10 whales in SAME direction (simple majority, no mixed signal): open position
   - Capital: $500 margin per trade, 3x leverage
   - TP: 10% ROE (re-entry 1: 8%, re-entry 2: 5%)
   - SL: 30% ROE (re-entry 1: 20%, re-entry 2: 15%)
@@ -27,7 +27,7 @@ MCP_URL           = "https://mcp.prod.senpi.ai/mcp"
 ASSETS            = ["BTC", "ETH", "HYPE", "SOL"]
 CAPITAL_PER_TRADE = 500.0    # $500 margin per position
 LEVERAGE          = 3
-CONSENSUS_MIN     = 3        # min whales same direction
+CONSENSUS_MIN     = 5        # min whales same direction (simple majority of top 10)
 WHALE_COUNT       = 10       # top N whales to check
 MAX_REENTRIES     = 2        # 0=entry, 1=re1, 2=re2 (3 total)
 
@@ -157,7 +157,7 @@ def get_open_positions(wallet: str) -> list:
 
 # ── Main tick ─────────────────────────────────────────────────────────────────
 def notify(msg: str):
-    print(msg)  # Hermes delivers stdout to Nikola
+    pass  # Silent — positions checked on-demand via Hermes chat
 
 def run():
     state = load_state()
@@ -206,6 +206,16 @@ def run():
     # ── Phase 2: Consensus scan ────────────────────────────────────────────────
     consensus = get_whale_consensus()
     actions = []
+
+    # Exit any position where consensus has DISAPPEARED (mixed signal or no whales)
+    # This catches the case where an asset drops out of consensus entirely
+    for asset in list(state["open_positions"].keys()):
+        if asset in live_positions and asset not in consensus:
+            current_dir = "long" if float(live_positions[asset]["position"]["szi"]) > 0 else "short"
+            close_position(wallet, asset, f"Consensus lost on {asset} — no clean signal")
+            notify(f"⚠️ Sniper: {asset} consensus lost (mixed/gone). Closing {current_dir} position.")
+            del state["open_positions"][asset]
+            save_state(state)
 
     for asset, signal in consensus.items():
         direction = signal["direction"]
